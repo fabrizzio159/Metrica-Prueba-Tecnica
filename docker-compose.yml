@@ -1,0 +1,174 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sqlserver
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=SqlServer2024!
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    networks:
+      - microservices-net
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - microservices-net
+
+  seaweedfs-master:
+    image: chrislusf/seaweedfs
+    container_name: seaweedfs-master
+    command: master -ip=seaweedfs-master -port=9333
+    ports:
+      - "9333:9333"
+    networks:
+      - microservices-net
+
+  seaweedfs-volume:
+    image: chrislusf/seaweedfs
+    container_name: seaweedfs-volume
+    command: volume -mserver="seaweedfs-master:9333" -port=8080 -ip=seaweedfs-volume
+    ports:
+      - "8080:8080"
+    depends_on:
+      - seaweedfs-master
+    networks:
+      - microservices-net
+
+  api-gateway:
+    build:
+      context: ./src/ApiGateway/ApiGateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    ports:
+      - "5000:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - JWT__Key=S3cur1tyK3yF0rJWT2024MicroservicesPruebaTecnica!
+      - JWT__Issuer=CargaMasivaSystem
+      - JWT__Audience=CargaMasivaClient
+      - ReverseProxy__Clusters__auth-cluster__Destinations__destination1__Address=http://auth-service:8080
+      - ReverseProxy__Clusters__control-cluster__Destinations__destination1__Address=http://control-service:8080
+    depends_on:
+      - auth-service
+      - control-service
+    networks:
+      - microservices-net
+
+  auth-service:
+    build:
+      context: ./src/AuthService/AuthService
+      dockerfile: Dockerfile
+    container_name: auth-service
+    restart: on-failure
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=CargaMasivaDb;User Id=sa;Password=SqlServer2024!;TrustServerCertificate=True
+      - JWT__Key=S3cur1tyK3yF0rJWT2024MicroservicesPruebaTecnica!
+      - JWT__Issuer=CargaMasivaSystem
+      - JWT__Audience=CargaMasivaClient
+    depends_on:
+      - sqlserver
+    networks:
+      - microservices-net
+
+  control-service:
+    build:
+      context: ./src/ControlService/ControlService
+      dockerfile: Dockerfile
+    container_name: control-service
+    restart: on-failure
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=CargaMasivaDb;User Id=sa;Password=SqlServer2024!;TrustServerCertificate=True
+      - JWT__Key=S3cur1tyK3yF0rJWT2024MicroservicesPruebaTecnica!
+      - JWT__Issuer=CargaMasivaSystem
+      - JWT__Audience=CargaMasivaClient
+      - RabbitMQ__HostName=rabbitmq
+      - RabbitMQ__UserName=guest
+      - RabbitMQ__Password=guest
+      - SeaweedFS__MasterUrl=http://seaweedfs-master:9333
+      - SeaweedFS__VolumeUrl=http://seaweedfs-volume:8080
+    depends_on:
+      - sqlserver
+      - rabbitmq
+      - seaweedfs-master
+      - seaweedfs-volume
+    networks:
+      - microservices-net
+
+  carga-masiva-service:
+    build:
+      context: ./src/CargaMasivaService/CargaMasivaService
+      dockerfile: Dockerfile
+    container_name: carga-masiva-service
+    restart: on-failure
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=CargaMasivaDb;User Id=sa;Password=SqlServer2024!;TrustServerCertificate=True
+      - RabbitMQ__HostName=rabbitmq
+      - RabbitMQ__UserName=guest
+      - RabbitMQ__Password=guest
+      - SeaweedFS__MasterUrl=http://seaweedfs-master:9333
+      - SeaweedFS__VolumeUrl=http://seaweedfs-volume:8080
+    depends_on:
+      - sqlserver
+      - rabbitmq
+      - seaweedfs-master
+      - seaweedfs-volume
+    networks:
+      - microservices-net
+
+  notificacion-service:
+    build:
+      context: ./src/NotificacionService/NotificacionService
+      dockerfile: Dockerfile
+    container_name: notificacion-service
+    restart: on-failure
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=CargaMasivaDb;User Id=sa;Password=SqlServer2024!;TrustServerCertificate=True
+      - RabbitMQ__HostName=rabbitmq
+      - RabbitMQ__UserName=guest
+      - RabbitMQ__Password=guest
+      - SMTP__Host=smtp.gmail.com
+      - SMTP__Port=587
+      - SMTP__User=tu_correo@gmail.com
+      - SMTP__Password=tu_app_password
+      - SMTP__From=tu_correo@gmail.com
+    depends_on:
+      - sqlserver
+      - rabbitmq
+    networks:
+      - microservices-net
+
+  frontend:
+    build:
+      context: ./src/frontend-app
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - microservices-net
+
+volumes:
+  sqlserver_data:
+  rabbitmq_data:
+
+networks:
+  microservices-net:
+    driver: bridge
